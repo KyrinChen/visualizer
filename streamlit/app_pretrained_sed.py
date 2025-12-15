@@ -14,7 +14,7 @@ DEFAULT_INPUT_PATH = "/inspire/ssd/project/embodied-multimodality/public/jqchen/
 # ==================== 可视化函数 ====================
 
 def render_timeline(output_data: dict, selected_thresholds=None):
-    """使用 Altair 绘制多阈值时间轴对比（分面视图）"""
+    """使用 Altair 绘制多阈值时间轴对比（独立分面视图，动态行高）"""
     all_events = []
     
     # 按照阈值排序 (0.1, 0.2, 0.5)
@@ -32,7 +32,7 @@ def render_timeline(output_data: dict, selected_thresholds=None):
         events = output_data[thresh]
         for evt in events:
             all_events.append({
-                "Threshold": f"Threshold: {thresh}",  # 添加前缀使分面标题更清晰
+                "Threshold": thresh,  # 保留原始阈值用于分组
                 "Event": evt.get("event_label", "Unknown"),
                 "Start": evt.get("onset", 0),
                 "End": evt.get("offset", 0),
@@ -45,41 +45,62 @@ def render_timeline(output_data: dict, selected_thresholds=None):
 
     df = pd.DataFrame(all_events)
     
-    # 获取所有唯一的事件类别，用于统一 Y 轴范围
+    # 获取所有事件类别，用于统一颜色
     all_event_types = sorted(df['Event'].unique())
     
-    # 创建分面甘特图：按阈值分面，Y轴为事件类别
-    chart = alt.Chart(df).mark_bar(opacity=0.8).encode(
-        x=alt.X('Start:Q', title='Time (s)', scale=alt.Scale(nice=True)),
-        x2='End:Q',
-        y=alt.Y('Event:N', 
-                title='Event Type',
-                sort=all_event_types,  # 固定排序，避免不同分面顺序不一致
-                axis=alt.Axis(labelLimit=150)),
-        color=alt.Color('Event:N', 
-                       legend=alt.Legend(title="Event Type", orient='right'),
-                       scale=alt.Scale(scheme='tableau20')),
-        tooltip=[
-            alt.Tooltip('Event:N', title='Event'),
-            alt.Tooltip('Start:Q', title='Start (s)', format='.2f'),
-            alt.Tooltip('End:Q', title='End (s)', format='.2f'),
-            alt.Tooltip('Duration:Q', title='Duration (s)', format='.2f'),
-            alt.Tooltip('Threshold:N', title='Threshold')
-        ],
-        facet=alt.Facet('Threshold:N', 
-                       title=None,  # 不显示总标题，每个子图的标题就是阈值
-                       sort=[f"Threshold: {t}" for t in sorted_thresholds])  # 按阈值顺序排列
-    ).properties(
-        width='container',
-        height=max(80, len(all_event_types) * 25 + 20)  # 根据事件数量动态调整高度
-    ).resolve_scale(
-        y='shared'  # 所有分面共享 Y 轴，确保同一事件在不同阈值下对齐
-    )
+    # 手动为每个阈值创建独立图表
+    charts = []
+    for thresh in sorted_thresholds:
+        # 过滤当前阈值的数据
+        df_thresh = df[df['Threshold'] == thresh]
+        
+        if df_thresh.empty:
+            continue
+        
+        # 计算当前阈值的事件数量，动态调整高度
+        event_count = df_thresh['Event'].nunique()
+        chart_height = max(60, event_count * 30 + 20)  # 每行30px，保证可读性
+        
+        # 创建单个图表
+        chart = alt.Chart(df_thresh).mark_bar(opacity=0.8).encode(
+            x=alt.X('Start:Q', 
+                   title='Time (s)' if thresh == sorted_thresholds[-1] else '',  # 只在最后一个显示标题
+                   axis=alt.Axis(grid=True, labelAngle=0)),
+            x2='End:Q',
+            y=alt.Y('Event:N', 
+                   title='Event Type',
+                   sort=None,  # 每个分面独立排序
+                   axis=alt.Axis(labelLimit=200)),
+            color=alt.Color('Event:N', 
+                           legend=None,  # 移除图例，避免超出边界
+                           scale=alt.Scale(scheme='tableau20', domain=all_event_types)),  # 统一颜色映射
+            tooltip=[
+                alt.Tooltip('Event:N', title='Event'),
+                alt.Tooltip('Start:Q', title='Start (s)', format='.2f'),
+                alt.Tooltip('End:Q', title='End (s)', format='.2f'),
+                alt.Tooltip('Duration:Q', title='Duration (s)', format='.2f'),
+                alt.Tooltip('Threshold:N', title='Threshold')
+            ]
+        ).properties(
+            title=f"Threshold: {thresh}",
+            height=chart_height
+        )
+        
+        charts.append(chart)
     
-    st.altair_chart(chart, use_container_width=True)
+    # 垂直拼接所有图表
+    if len(charts) == 1:
+        combined = charts[0]
+    else:
+        combined = alt.vconcat(*charts).resolve_scale(
+            x='shared',  # 时间轴对齐
+            color='shared'  # 颜色一致
+        )
+    
+    st.altair_chart(combined, use_container_width=True)
     
     # 添加说明文字
-    st.caption("💡 每个子图代表一个阈值。同一事件在不同阈值下的检测范围可通过垂直对比观察。")
+    st.caption("💡 每个子图代表一个阈值。每行高度统一，事件类型按字母排序。")
 
 def display_entry(entry: dict, idx: int, jsonl_dir: Path):
     """展示单个 PretrainedSED 条目"""
