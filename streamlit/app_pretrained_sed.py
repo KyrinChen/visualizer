@@ -13,18 +13,26 @@ DEFAULT_INPUT_PATH = "/inspire/ssd/project/embodied-multimodality/public/jqchen/
 
 # ==================== 可视化函数 ====================
 
-def render_timeline(output_data: dict):
-    """使用 Altair 绘制多阈值时间轴对比"""
+def render_timeline(output_data: dict, selected_thresholds=None):
+    """使用 Altair 绘制多阈值时间轴对比（分面视图）"""
     all_events = []
     
     # 按照阈值排序 (0.1, 0.2, 0.5)
     sorted_thresholds = sorted(output_data.keys(), key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else 0)
     
+    # 如果指定了筛选阈值，只处理选中的阈值
+    if selected_thresholds:
+        sorted_thresholds = [t for t in sorted_thresholds if t in selected_thresholds]
+    
+    if not sorted_thresholds:
+        st.warning("请至少选择一个阈值")
+        return
+    
     for thresh in sorted_thresholds:
         events = output_data[thresh]
         for evt in events:
             all_events.append({
-                "Threshold": thresh,
+                "Threshold": f"Threshold: {thresh}",  # 添加前缀使分面标题更清晰
                 "Event": evt.get("event_label", "Unknown"),
                 "Start": evt.get("onset", 0),
                 "End": evt.get("offset", 0),
@@ -32,24 +40,46 @@ def render_timeline(output_data: dict):
             })
             
     if not all_events:
-        st.info("没有足够的数据用于绘制时间轴")
+        st.info("选中的阈值下没有检测到事件")
         return
 
     df = pd.DataFrame(all_events)
     
-    # 创建甘特图
-    chart = alt.Chart(df).mark_bar().encode(
-        x=alt.X('Start', title='Time (s)'),
-        x2='End',
-        y=alt.Y('Threshold', title='Confidence Threshold'),
-        color=alt.Color('Event', legend=alt.Legend(title="Event Type")),
-        tooltip=['Event', 'Start', 'End', 'Duration', 'Threshold']
+    # 获取所有唯一的事件类别，用于统一 Y 轴范围
+    all_event_types = sorted(df['Event'].unique())
+    
+    # 创建分面甘特图：按阈值分面，Y轴为事件类别
+    chart = alt.Chart(df).mark_bar(opacity=0.8).encode(
+        x=alt.X('Start:Q', title='Time (s)', scale=alt.Scale(nice=True)),
+        x2='End:Q',
+        y=alt.Y('Event:N', 
+                title='Event Type',
+                sort=all_event_types,  # 固定排序，避免不同分面顺序不一致
+                axis=alt.Axis(labelLimit=150)),
+        color=alt.Color('Event:N', 
+                       legend=alt.Legend(title="Event Type", orient='right'),
+                       scale=alt.Scale(scheme='tableau20')),
+        tooltip=[
+            alt.Tooltip('Event:N', title='Event'),
+            alt.Tooltip('Start:Q', title='Start (s)', format='.2f'),
+            alt.Tooltip('End:Q', title='End (s)', format='.2f'),
+            alt.Tooltip('Duration:Q', title='Duration (s)', format='.2f'),
+            alt.Tooltip('Threshold:N', title='Threshold')
+        ],
+        facet=alt.Facet('Threshold:N', 
+                       title=None,  # 不显示总标题，每个子图的标题就是阈值
+                       sort=[f"Threshold: {t}" for t in sorted_thresholds])  # 按阈值顺序排列
     ).properties(
-        height=300,
-        title="Event Timeline by Threshold"
-    ).interactive()
+        width='container',
+        height=max(80, len(all_event_types) * 25 + 20)  # 根据事件数量动态调整高度
+    ).resolve_scale(
+        y='shared'  # 所有分面共享 Y 轴，确保同一事件在不同阈值下对齐
+    )
     
     st.altair_chart(chart, use_container_width=True)
+    
+    # 添加说明文字
+    st.caption("💡 每个子图代表一个阈值。同一事件在不同阈值下的检测范围可通过垂直对比观察。")
 
 def display_entry(entry: dict, idx: int, jsonl_dir: Path):
     """展示单个 PretrainedSED 条目"""
@@ -57,38 +87,55 @@ def display_entry(entry: dict, idx: int, jsonl_dir: Path):
     audio_basename = extract_basename(audio_path_str) if audio_path_str else f"Item {idx}"
     
     with st.expander(f"#{idx} {audio_basename}", expanded=True):
-        col1, col2 = st.columns([1, 2])
+        # 垂直布局：音频 -> 时间轴 -> 详细表格
         
-        # 左侧：音频和基本信息
-        with col1:
-            st.markdown("### 🎵 Audio Source")
+        # 第一部分：音频播放器（全宽）
+        st.markdown("### 🎵 Audio Source")
+        real_audio_path = resolve_path(audio_path_str, jsonl_dir)
+        
+        if real_audio_path and real_audio_path.exists():
+            mime = guess_mime(real_audio_path)
+            st.audio(str(real_audio_path), format=mime)
+            st.success(f"✓ Loaded: `{real_audio_path.name}`")
+        else:
+            st.error(f"✗ File not found: `{audio_path_str}`")
+            st.caption("Try checking if the path in JSONL is correct or accessible.")
+        
+        st.markdown("---")
+        
+        # 第二部分：时间轴视图（全宽）
+        output_data = entry.get("output", {})
+        if not output_data:
+            st.warning("No detection output found.")
+        else:
+            # 获取所有阈值并排序
+            thresholds = sorted(output_data.keys(), key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else 0)
             
-            real_audio_path = resolve_path(audio_path_str, jsonl_dir)
+            st.markdown("### 📉 Timeline View")
             
-            if real_audio_path and real_audio_path.exists():
-                mime = guess_mime(real_audio_path)
-                st.audio(str(real_audio_path), format=mime)
-                st.success(f"Loaded: `{real_audio_path.name}`")
+            # 阈值筛选器（多选框）
+            col_filter, col_space = st.columns([3, 1])
+            with col_filter:
+                selected_thresholds = st.multiselect(
+                    "选择要显示的阈值",
+                    options=thresholds,
+                    default=thresholds,
+                    key=f"threshold_filter_{idx}",
+                    help="长音频时可以只选择关键阈值，减少滚动"
+                )
+            
+            # 渲染时间轴
+            if selected_thresholds:
+                render_timeline(output_data, selected_thresholds)
             else:
-                st.error(f"File not found: {audio_path_str}")
-                st.caption("Try checking if the path in JSONL is correct or accessible.")
+                st.info("👆 请至少选择一个阈值以显示时间轴")
             
             st.markdown("---")
-            st.markdown(f"**Raw Path**: `{audio_path_str}`")
-
-        # 右侧：检测结果
-        with col2:
-            st.markdown("### 📊 Detection Results")
             
-            output_data = entry.get("output", {})
-            if not output_data:
-                st.warning("No detection output found.")
-            else:
-                # 获取所有阈值并排序
-                thresholds = sorted(output_data.keys(), key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else 0)
-                
-                # 创建 Tabs：每个阈值一个 Tab，最后加一个对比 Tab
-                tab_labels = [f"Thresh: {t}" for t in thresholds] + ["📉 Timeline View"]
+            # 第三部分：详细数据表格（折叠在 Tabs 中）
+            with st.expander("📊 Detailed Results (Tables)", expanded=False):
+                # 创建 Tabs：每个阈值一个 Tab
+                tab_labels = [f"Thresh: {t}" for t in thresholds]
                 tabs = st.tabs(tab_labels)
                 
                 # 渲染每个阈值的列表数据
@@ -110,10 +157,9 @@ def display_entry(entry: dict, idx: int, jsonl_dir: Path):
                                 use_container_width=True,
                                 hide_index=True
                             )
-                
-                # 渲染时间轴视图
-                with tabs[-1]:
-                    render_timeline(output_data)
+        
+        # 底部：元数据信息
+        st.caption(f"**Raw Path**: `{audio_path_str}`")
 
 # ==================== 主程序 ====================
 
