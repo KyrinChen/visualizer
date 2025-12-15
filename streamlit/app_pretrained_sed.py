@@ -63,24 +63,40 @@ def render_timeline(output_data: dict, selected_thresholds=None):
         
         # 创建单个图表
         chart = alt.Chart(df_thresh).mark_bar(opacity=0.8).encode(
-            x=alt.X('Start:Q', 
-                   title='Time (s)' if thresh == sorted_thresholds[-1] else '',  # 只在最后一个显示标题
-                   axis=alt.Axis(grid=True, labelAngle=0)),
+            x=alt.X(
+                'Start:Q',
+                title='Time (s)' if thresh == sorted_thresholds[-1] else '',  # 只在最后一个显示标题
+                axis=alt.Axis(
+                    grid=True,
+                    labelAngle=0,
+                    # 始终显示分钟位（不足1分钟显示 00:SS），去掉毫秒
+                    labelExpr="timeFormat(datum.value * 1000, datum.value >= 3600 ? '%H:%M:%S' : '%M:%S')"
+                )
+            ),
             x2='End:Q',
-            y=alt.Y('Event:N', 
-                   title='Event Type',
-                   sort=None,  # 每个分面独立排序
-                   axis=alt.Axis(labelLimit=200)),
-            color=alt.Color('Event:N', 
-                           legend=None,  # 移除图例，避免超出边界
-                           scale=alt.Scale(scheme='tableau20', domain=all_event_types)),  # 统一颜色映射
+            y=alt.Y(
+                'Event:N',
+                title='Event Type',
+                sort=None,  # 每个分面独立排序
+                axis=alt.Axis(labelLimit=200)
+            ),
+            color=alt.Color(
+                'Event:N',
+                legend=None,  # 移除图例，避免超出边界
+                scale=alt.Scale(scheme='tableau20', domain=all_event_types)  # 统一颜色映射
+            ),
             tooltip=[
                 alt.Tooltip('Event:N', title='Event'),
-                alt.Tooltip('Start:Q', title='Start (s)', format='.2f'),
-                alt.Tooltip('End:Q', title='End (s)', format='.2f'),
-                alt.Tooltip('Duration:Q', title='Duration (s)', format='.2f'),
+                alt.Tooltip('StartLabel:N', title='Start'),
+                alt.Tooltip('EndLabel:N', title='End'),
+                alt.Tooltip('DurationLabel:N', title='Duration'),
                 alt.Tooltip('Threshold:N', title='Threshold')
             ]
+        ).transform_calculate(
+            # 始终显示分钟位（不足1分钟显示 00:SS），去掉毫秒
+            StartLabel="timeFormat(datum.Start * 1000, datum.Start >= 3600 ? '%H:%M:%S' : '%M:%S')",
+            EndLabel="timeFormat(datum.End * 1000, datum.End >= 3600 ? '%H:%M:%S' : '%M:%S')",
+            DurationLabel="timeFormat(datum.Duration * 1000, datum.Duration >= 3600 ? '%H:%M:%S' : '%M:%S')"
         ).properties(
             title=f"Threshold: {thresh}",
             height=chart_height
