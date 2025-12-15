@@ -223,6 +223,22 @@ def main():
         st.info("👈 Please verify the data path in the sidebar.")
         st.stop()
         
+    # 数据刷新按钮：清除缓存并重新运行，确保新文件被加载
+    if st.sidebar.button("🔄 Refresh data (clear cache)", help="清除缓存并重新加载数据文件"):
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+        try:
+            st.experimental_memo.clear()
+        except Exception:
+            pass
+        # Streamlit ≥1.30 使用 st.rerun；兼容旧版本则保留回退
+        try:
+            st.rerun()
+        except Exception:
+            st.experimental_rerun()
+        
     # 2. 加载数据
     with st.spinner("Loading data..."):
         datasets = load_jsonl_files(input_path_str)

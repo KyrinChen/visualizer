@@ -8,5 +8,7 @@ export PYTHONPATH=$PYTHONPATH:$SCRIPT_DIR
 echo "Starting PretrainedSED Visualizer..."
 echo "Workdir: $SCRIPT_DIR"
 
-streamlit run "$SCRIPT_DIR/app_pretrained_sed.py" --server.port 8502 --server.address 0.0.0.0 --server.fileWatcherType none
+streamlit run "$SCRIPT_DIR/app_pretrained_sed.py" \
+  --server.port 8502 \
+  --server.address 0.0.0.0
 
