@@ -9,7 +9,7 @@ sys.path.append(str(Path(__file__).parent))
 from src.utils import load_jsonl_files, resolve_path, extract_basename, guess_mime
 
 # ==================== 配置 ====================
-DEFAULT_INPUT_PATH = "/inspire/ssd/project/embodied-multimodality/public/jqchen/SED/PretrainedSED/output"
+DEFAULT_INPUT_PATH = "/inspire/ssd/project/embodied-multimodality/public/jqchen/SED/PretrainedSED/jqchen-test/output"
 
 # 基础字段常量
 BASE_FIELDS = {"onset", "offset", "event_label"}
@@ -305,13 +305,16 @@ def display_entry(entry: dict, idx: int, jsonl_dir: Path):
             st.warning("No detection data found.")
         else:
             # 数据源选择器（公共，在 Audio Source 和 Timeline View 之间）
+            # 默认选择"合并后"（如果存在），否则选择"原始"
+            default_index = 1 if "合并后" in available_sources else 0
+            
             st.markdown("### ⚙️ Data Source")
             col_source1, col_source2 = st.columns([1, 3])
             with col_source1:
                 data_source = st.radio(
                     "选择数据源",
                     options=available_sources,
-                    index=0,
+                    index=default_index,
                     key=f"data_source_{idx}",
                     help="原始：未处理的检测结果\n合并后：按事件形态学合并的结果"
                 )
@@ -348,6 +351,110 @@ def display_entry(entry: dict, idx: int, jsonl_dir: Path):
                 st.info("👆 请至少选择一个阈值以显示时间轴")
             
             st.markdown("---")
+            
+            # 新增：文本内容显示部分
+            format_text_data = entry.get("format_text", {})
+            sed_caption_data = entry.get("sed_caption", {})
+            
+            if format_text_data:
+                st.markdown("### 📄 Format Text")
+                # 按阈值排序
+                format_thresholds = sorted(format_text_data.keys(), 
+                                          key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else 0)
+                
+                if len(format_thresholds) == 1:
+                    st.text_area(
+                        f"Threshold: {format_thresholds[0]}",
+                        value=format_text_data[format_thresholds[0]],
+                        height=300,
+                        key=f"format_text_{idx}",
+                        disabled=True
+                    )
+                else:
+                    # 多个阈值，使用 tabs
+                    format_tabs = st.tabs([f"Thresh: {t}" for t in format_thresholds])
+                    for i, thresh in enumerate(format_thresholds):
+                        with format_tabs[i]:
+                            st.text_area(
+                                "Text Content",
+                                value=format_text_data[thresh],
+                                height=300,
+                                key=f"format_text_{idx}_{thresh}",
+                                disabled=True
+                            )
+                st.markdown("---")
+            
+            if sed_caption_data:
+                st.markdown("### ✍️ SED Caption")
+                # 按版本排序
+                versions = sorted(sed_caption_data.keys())
+                
+                # 辅助函数：提取 caption 的 content 和 comment
+                def extract_caption_data(version_data):
+                    """提取 caption 数据
+                    支持新格式：{"v1": {"content": "...", "comment": "..."}}
+                    兼容旧格式：{"v1": "..."} (直接字符串)
+                    返回: (content, comment) 元组，comment 可能为 None
+                    """
+                    if isinstance(version_data, dict):
+                        # 新格式：{"content": "...", "comment": "..."}
+                        content = version_data.get("content", "")
+                        comment = version_data.get("comment")  # 可能为 None
+                        return content, comment
+                    elif isinstance(version_data, str):
+                        # 旧格式：直接字符串
+                        return version_data, None
+                    else:
+                        # 降级处理：尝试转换为字符串
+                        return str(version_data), None
+                
+                if len(versions) == 1:
+                    # 单个版本：直接显示
+                    version = versions[0]
+                    content, comment = extract_caption_data(sed_caption_data[version])
+                    
+                    st.text_area(
+                        f"Version: {version} - Content",
+                        value=content,
+                        height=300,
+                        key=f"sed_caption_content_{idx}_{version}",
+                        disabled=True
+                    )
+                    
+                    # 如果有 comment，显示它（检查是否为 None 且非空字符串）
+                    if comment is not None and str(comment).strip():
+                        st.text_area(
+                            f"Version: {version} - Comment",
+                            value=str(comment),
+                            height=200,
+                            key=f"sed_caption_comment_{idx}_{version}",
+                            disabled=True
+                        )
+                else:
+                    # 多个版本，使用 tabs 切换
+                    caption_tabs = st.tabs([f"Version: {v}" for v in versions])
+                    for i, version in enumerate(versions):
+                        with caption_tabs[i]:
+                            content, comment = extract_caption_data(sed_caption_data[version])
+                            
+                            st.text_area(
+                                "Content",
+                                value=content,
+                                height=300,
+                                key=f"sed_caption_content_{idx}_{version}",
+                                disabled=True
+                            )
+                            
+                            # 如果有 comment，显示它（检查是否为 None 且非空字符串）
+                            if comment is not None and str(comment).strip():
+                                st.text_area(
+                                    "Comment",
+                                    value=str(comment),
+                                    height=200,
+                                    key=f"sed_caption_comment_{idx}_{version}",
+                                    disabled=True
+                                )
+                st.markdown("---")
             
             # 第四部分：详细数据表格（折叠在 Tabs 中）
             with st.expander(f"📊 Detailed Results ({data_source})", expanded=False):
